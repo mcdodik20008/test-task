@@ -14,7 +14,6 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -22,33 +21,24 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class CrptApi {
 
-    private static final String API_URL = "https://ismp.crpt.ru/api/v3/lk/documents/create";
+    private final String CRPT_API_URL = "https://ismp.crpt.ru/api/v3/lk/documents/create";
     private final ObjectMapper objectMapper;
     private final HttpClient client;
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(1);
     private final AtomicInteger requestCounter = new AtomicInteger(0);
     private final int requestLimit;
-    private final TimeUnit timeUnit;
 
     public CrptApi(TimeUnit timeUnit, int requestLimit) {
         this.requestLimit = requestLimit;
-        this.timeUnit = timeUnit;
         this.client = HttpClient.newBuilder()
                 .version(HttpClient.Version.HTTP_2)
                 .followRedirects(HttpClient.Redirect.NORMAL)
                 .build();
-        this.objectMapper = new ObjectMapper()
-                .registerModule(new JavaTimeModule());
-        scheduledResetCounter();
+        this.objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
+
+        scheduledResetCounter(timeUnit);
     }
 
-    private void scheduledResetCounter() {
-        scheduler.scheduleAtFixedRate(() -> {
-            synchronized (requestCounter) {
-                requestCounter.set(0);
-            }
-        }, 2, 2, timeUnit);
-    }
 
 
     public <T> String createJson(T document) {
@@ -59,15 +49,20 @@ public class CrptApi {
         }
     }
 
-    private String sendPostRequest(Map<String, String> body) {
+    /**
+     *
+     * @return response.body()
+     */
+    public <T> String sendPostRequest(T objectBody, String sign) {
+        String body = createJson(objectBody);
         try {
             waitForPermission();
             requestCounter.incrementAndGet();
             HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(API_URL))
+                    .uri(URI.create(CRPT_API_URL))
                     .timeout(Duration.ofSeconds(10))
                     .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(body.get("body")))
+                    .POST(HttpRequest.BodyPublishers.ofString(body))
                     .build();
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
             return response.body();
@@ -89,14 +84,21 @@ public class CrptApi {
         }
     }
 
+    private void scheduledResetCounter(TimeUnit timeUnit) {
+        scheduler.scheduleAtFixedRate(() -> {
+            synchronized (requestCounter) {
+                requestCounter.set(0);
+            }
+        }, 1, 1, timeUnit);
+    }
+
     @SneakyThrows
     public static void main(String[] args) {
-        CrptApi api = new CrptApi(TimeUnit.SECONDS, 1);
+        CrptApi api = new CrptApi(TimeUnit.SECONDS, 5);
         Document doc = new Document();
+        String sign = "123123";
         Runnable task = () -> {
-            String json = api.createJson(doc);
-            Map<String, String> body = Map.of("body", json);
-            String s = api.sendPostRequest(body);
+            String s = api.sendPostRequest(doc, sign);
             System.out.println(s);
         };
         for (int i = 0; i < 100; i++) {
